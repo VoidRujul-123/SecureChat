@@ -33,51 +33,66 @@ export const subscribe = (listener) => {
 
 export const notify = () => listeners.forEach(l => l());
 
+const pendingSaves = new Map();
+
 /**
- * Saves an encrypted message to the database.
+ * Saves an encrypted message to the database with concurrency lock.
  * @param {Object} messageObj 
  * @param {string} owner The username of the currently logged-in user
  */
 export const saveMessage = async (messageObj, owner) => {
   if (!owner) throw new Error("Owner (username) is required to save messages");
 
-  const existing = await db.messages.where('[owner+messageId]').equals([owner, messageObj.messageId]).first();
+  const lockKey = `${owner}-${messageObj.messageId}`;
   
-  if (existing) {
-    // If it exists, we might be receiving an update (edit, reaction, signal, etc.)
-    // Only update fields provided in messageObj
-    const { messageId, owner: msgOwner, ...updates } = messageObj;
-    await db.messages.update(existing.id, updates);
-  } else {
-    await db.messages.add({
-      reactions: {},
-      pinned: 0,
-      bookmarked: 0,
-      readStatus: 'sent',
-      ...messageObj,
-      owner,
-      timestamp: messageObj.timestamp || Date.now()
-    });
-  }
-  
-  // Update or create chat summary (ONLY if it's a message with content or it's a new chat)
-  const isUpdateOnly = messageObj.type === 'UPDATE' || messageObj.type === 'READ_RECEIPT';
-  if (!isUpdateOnly || !existing) {
-    await db.chats.put({
-      roomId: messageObj.roomId,
-      owner,
-      name: messageObj.roomName || messageObj.roomId,
-      lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : decryptMessage(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? decryptMessage(existing.encryptedText) : '')),
-      timestamp: messageObj.timestamp || Date.now()
-    });
+  if (pendingSaves.has(lockKey)) {
+    await pendingSaves.get(lockKey).catch(() => {});
   }
 
-  // SYNC TO SUPABASE (Only if we are the sender and it's not a local-only event or signal)
-  if (messageObj.sender === owner && !messageObj.fromSupabase && !isUpdateOnly) {
-      broadcastMessage(messageObj);
-  }
+  const saveOperation = (async () => {
+    const existing = await db.messages.where('[owner+messageId]').equals([owner, messageObj.messageId]).first();
+    
+    if (existing) {
+      // If it exists, we might be receiving an update (edit, reaction, signal, etc.)
+      const { messageId, owner: msgOwner, ...updates } = messageObj;
+      await db.messages.update(existing.id, updates);
+    } else {
+      await db.messages.add({
+        reactions: {},
+        pinned: 0,
+        bookmarked: 0,
+        readStatus: 'sent',
+        ...messageObj,
+        owner,
+        timestamp: messageObj.timestamp || Date.now()
+      });
+    }
+    
+    const isUpdateOnly = messageObj.type === 'UPDATE' || messageObj.type === 'READ_RECEIPT';
+    if (!isUpdateOnly || !existing) {
+      await db.chats.put({
+        roomId: messageObj.roomId,
+        owner,
+        name: messageObj.roomName || messageObj.roomId,
+        lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : decryptMessage(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? decryptMessage(existing.encryptedText) : '')),
+        timestamp: messageObj.timestamp || Date.now()
+      });
+    }
 
-  notify();
+    if (messageObj.sender === owner && !messageObj.fromSupabase && !isUpdateOnly) {
+        broadcastMessage(messageObj);
+    }
+  })();
+
+  pendingSaves.set(lockKey, saveOperation);
+
+  try {
+    await saveOperation;
+  } finally {
+    // Keep it in map for a brief window to prevent micro-race conditions just in case
+    setTimeout(() => pendingSaves.delete(lockKey), 1000);
+    notify();
+  }
 };
 
 /**

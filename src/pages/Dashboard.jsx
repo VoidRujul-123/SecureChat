@@ -138,12 +138,17 @@ const Dashboard = ({ user, onLogout }) => {
       (newMessage) => {
         if (newMessage.sender.toLowerCase() === lowerMe) return;
         handleReceivedMessage({
-          messageId: newMessage.message_id,
-          roomId: newMessage.room_id,
+          messageId: newMessage.message_id || newMessage.messageId,
+          roomId: newMessage.room_id || newMessage.roomId,
           sender: newMessage.sender.toLowerCase(),
-          encryptedText: newMessage.encrypted_text,
-          fileData: newMessage.file_data,
-          timestamp: new Date(newMessage.timestamp).getTime(),
+          encryptedText: newMessage.encrypted_text || newMessage.encryptedText,
+          fileData: newMessage.file_data || newMessage.fileData,
+          timestamp: newMessage.timestamp ? new Date(newMessage.timestamp).getTime() : Date.now(),
+          type: newMessage.type,
+          isEdited: newMessage.isEdited,
+          pinned: newMessage.pinned,
+          bookmarked: newMessage.bookmarked,
+          reactions: newMessage.reactions,
           fromSupabase: true
         });
       }
@@ -157,12 +162,17 @@ const Dashboard = ({ user, onLogout }) => {
         (newMessage) => {
           if (newMessage.sender.toLowerCase() === lowerMe) return;
           handleReceivedMessage({
-            messageId: newMessage.message_id,
-            roomId: newMessage.room_id,
+            messageId: newMessage.message_id || newMessage.messageId,
+            roomId: newMessage.room_id || newMessage.roomId,
             sender: newMessage.sender.toLowerCase(),
-            encryptedText: newMessage.encrypted_text,
-            fileData: newMessage.file_data,
-            timestamp: new Date(newMessage.timestamp).getTime(),
+            encryptedText: newMessage.encrypted_text || newMessage.encryptedText,
+            fileData: newMessage.file_data || newMessage.fileData,
+            timestamp: newMessage.timestamp ? new Date(newMessage.timestamp).getTime() : Date.now(),
+            type: newMessage.type,
+            isEdited: newMessage.isEdited,
+            pinned: newMessage.pinned,
+            bookmarked: newMessage.bookmarked,
+            reactions: newMessage.reactions,
             fromSupabase: true
           });
         }
@@ -295,6 +305,7 @@ const Dashboard = ({ user, onLogout }) => {
       encryptedText, 
       isEdited: true, 
       type: 'UPDATE',
+      sender: user.username.toLowerCase(),
       packetId: `${user.username.toLowerCase()}-${Date.now()}-edit-${Math.random().toString(36).substr(2, 5)}`
     };
     sendMessage(msg.roomId, payload);
@@ -341,6 +352,7 @@ const Dashboard = ({ user, onLogout }) => {
       roomId: msg.roomId, 
       pinned, 
       type: 'UPDATE',
+      sender: user.username.toLowerCase(),
       packetId: `${user.username.toLowerCase()}-${Date.now()}-pin-${Math.random().toString(36).substr(2, 5)}`
     };
     sendMessage(msg.roomId, payload);
