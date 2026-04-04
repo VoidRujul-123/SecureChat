@@ -66,11 +66,14 @@ export const broadcastMessage = async (messageObj) => {
       timestamp: new Date(messageObj.timestamp).toISOString()
     };
 
-    const { error } = await supabase.from('messages').insert([payload]);
-    if (error) throw error;
-
-    // Trigger the real-time notification
+    // Trigger the real-time notification immediately so it guarantees delivery over WebSocket regardless of RLS or Postgres failures
     sendRealtimeBroadcast(messageObj.roomId, payload, messageObj.sender);
+
+    const { error } = await supabase.from('messages').insert([payload]);
+    if (error) {
+        console.warn('Supabase: Failed to insert to Postgres database, but websocket broadcast was fired.', error);
+        return false;
+    }
 
     return true;
   } catch (err) {
