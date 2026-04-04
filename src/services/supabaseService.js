@@ -46,7 +46,8 @@ export const sendRealtimeBroadcast = (roomId, payload, sender) => {
                 tempUser.subscribe((status) => {
                     if (status === 'SUBSCRIBED') {
                         tempUser.send({ type: 'broadcast', event: 'new_msg', payload });
-                        setTimeout(() => supabase.removeChannel(tempUser), 2000);
+                        // Keep connection alive for 15 seconds to handle continuous follow-up messages gracefully
+                        setTimeout(() => supabase.removeChannel(tempUser), 15000);
                     }
                 });
             }

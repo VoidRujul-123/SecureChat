@@ -39,6 +39,15 @@ export const notify = () => listeners.forEach(l => l());
 
 const pendingSaves = new Map();
 
+const safeDecrypt = (encryptedText) => {
+  if (!encryptedText) return '';
+  try {
+    return decryptMessage(encryptedText);
+  } catch (e) {
+    return '[Decryption Failed]';
+  }
+};
+
 /**
  * Saves an encrypted message to the database with concurrency lock.
  * @param {Object} messageObj 
@@ -108,7 +117,7 @@ export const saveMessage = async (messageObj, owner) => {
         roomId: messageObj.roomId,
         owner,
         name: messageObj.roomName || messageObj.roomId,
-        lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : decryptMessage(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? decryptMessage(existing.encryptedText) : '')),
+        lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : safeDecrypt(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? safeDecrypt(existing.encryptedText) : '')),
         timestamp: messageObj.timestamp || Date.now()
       };
       
