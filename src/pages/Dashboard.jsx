@@ -109,6 +109,13 @@ const Dashboard = ({ user, onLogout }) => {
     
     await saveMessage(messageToSave, user.username.toLowerCase());
 
+    // Aggressively pop up the chat window if receiving a new message 
+    if (activeRoomRef.current !== localRoomId && data.type !== 'UPDATE' && data.type !== 'READ_RECEIPT') {
+        setActiveRoom(localRoomId);
+        activeRoomRef.current = localRoomId;
+        setTypingUser(null);
+    }
+
     if (activeRoomRef.current === localRoomId && !data.fromSupabase && data.messageId) {
       sendMessage(localRoomId, { type: 'READ_RECEIPT', messageId: data.messageId, roomId: localRoomId });
     }
