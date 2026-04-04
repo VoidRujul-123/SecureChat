@@ -192,7 +192,8 @@ export const connectToRoom = (targetId, roomId, metadata = {}) => {
   if (targetPeerId === peer.id) return null;
 
   const existing = peerConnections[targetPeerId];
-  if (existing && existing.open) return existing;
+  // Prevent WebRTC race conditions by returning pending/connecting channels instead of spawning a competing duplicate
+  if (existing) return existing;
 
   console.log('[P2P] Connecting to:', targetPeerId);
   const conn = peer.connect(targetPeerId, {
