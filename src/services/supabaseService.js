@@ -19,7 +19,7 @@ export const sendRealtimeBroadcast = (roomId, payload, sender) => {
 
     // 1. Notify the room (p2p-a-b or room-xyz)
     const roomTopic = `room:${roomId}`;
-    const existingRoom = supabase.getChannels().find(c => c.topic === `realtime:${roomTopic}`);
+    const existingRoom = supabase.getChannels().find(c => c.topic === roomTopic || c.topic === `realtime:${roomTopic}`);
     if (existingRoom && existingRoom.state === 'joined') {
         existingRoom.send({ type: 'broadcast', event: 'new_msg', payload });
     } else {
@@ -38,7 +38,7 @@ export const sendRealtimeBroadcast = (roomId, payload, sender) => {
         const recipient = parts.slice(1).find(u => u.toLowerCase() !== sender.toLowerCase());
         if (recipient) {
             const userTopic = `room:user-${recipient.toLowerCase()}`;
-            const existingUser = supabase.getChannels().find(c => c.topic === `realtime:${userTopic}`);
+            const existingUser = supabase.getChannels().find(c => c.topic === userTopic || c.topic === `realtime:${userTopic}`);
             if (existingUser && existingUser.state === 'joined') {
                 existingUser.send({ type: 'broadcast', event: 'new_msg', payload });
             } else {
@@ -129,7 +129,8 @@ export const loadSupabaseMessages = async (roomId, limit = 50) => {
         sender: m.sender,
         encryptedText: m.encrypted_text,
         fileData: m.file_data,
-        timestamp: new Date(m.timestamp).getTime()
+        timestamp: new Date(m.timestamp).getTime(),
+        fromSupabase: true
     }));
   } catch (err) {
     console.error('Supabase: Failed to load messages:', err);

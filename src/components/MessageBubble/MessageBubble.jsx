@@ -276,7 +276,17 @@ const FileRenderer = ({ fileData }) => {
           style={{ maxWidth: '100%', borderRadius: '8px', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)' }}
           onClick={() => window.open(decryptedData)}
         />
-        <div style={{ fontSize: '12px', opacity: 0.8, wordBreak: 'break-all' }}>{fileData.name}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: '12px', opacity: 0.8, wordBreak: 'break-all', maxWidth: '75%' }}>{fileData.name}</div>
+          <a
+            href={decryptedData}
+            download={fileData.name}
+            style={{ fontSize: '11px', color: 'var(--accent-secondary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+            title="Download Image"
+          >
+            <Download size={14} /> 
+          </a>
+        </div>
       </div>
     );
   }

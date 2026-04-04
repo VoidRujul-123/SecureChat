@@ -17,8 +17,12 @@ db.version(5).stores({
   // Database upgraded to v5
 });
 
+export let isDbFailed = false;
+export const memoryStore = { messages: [], chats: [] };
+
 db.open().catch(err => {
-  console.error("Critical: Failed to open db:", err);
+  console.error("Critical: Failed to open db. Using in-memory fallback:", err);
+  isDbFailed = true;
 });
 
 const listeners = [];
@@ -50,14 +54,33 @@ export const saveMessage = async (messageObj, owner) => {
   }
 
   const saveOperation = (async () => {
-    const existing = await db.messages.where('[owner+messageId]').equals([owner, messageObj.messageId]).first();
+    let existing;
+    if (isDbFailed) {
+      existing = memoryStore.messages.find(m => m.owner === owner && m.messageId === messageObj.messageId);
+    } else {
+      try {
+        existing = await db.messages.where('[owner+messageId]').equals([owner, messageObj.messageId]).first();
+      } catch (err) {
+        isDbFailed = true;
+        existing = memoryStore.messages.find(m => m.owner === owner && m.messageId === messageObj.messageId);
+      }
+    }
     
     if (existing) {
       // If it exists, we might be receiving an update (edit, reaction, signal, etc.)
       const { messageId, owner: msgOwner, ...updates } = messageObj;
-      await db.messages.update(existing.id, updates);
+      if (isDbFailed) {
+        Object.assign(existing, updates);
+      } else {
+        try {
+          await db.messages.update(existing.id, updates);
+        } catch (e) {
+          isDbFailed = true;
+          Object.assign(existing, updates);
+        }
+      }
     } else {
-      await db.messages.add({
+      const newMsg = {
         reactions: {},
         pinned: 0,
         bookmarked: 0,
@@ -65,18 +88,46 @@ export const saveMessage = async (messageObj, owner) => {
         ...messageObj,
         owner,
         timestamp: messageObj.timestamp || Date.now()
-      });
+      };
+      
+      if (isDbFailed) {
+        memoryStore.messages.push(newMsg);
+      } else {
+        try {
+          await db.messages.add(newMsg);
+        } catch (e) {
+          isDbFailed = true;
+          memoryStore.messages.push(newMsg);
+        }
+      }
     }
     
     const isUpdateOnly = messageObj.type === 'UPDATE' || messageObj.type === 'READ_RECEIPT';
     if (!isUpdateOnly || !existing) {
-      await db.chats.put({
+      const chatObj = {
         roomId: messageObj.roomId,
         owner,
         name: messageObj.roomName || messageObj.roomId,
         lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : decryptMessage(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? decryptMessage(existing.encryptedText) : '')),
         timestamp: messageObj.timestamp || Date.now()
-      });
+      };
+      
+      const updateMemoryChat = () => {
+        const idx = memoryStore.chats.findIndex(c => c.owner === owner && c.roomId === messageObj.roomId);
+        if (idx >= 0) memoryStore.chats[idx] = chatObj;
+        else memoryStore.chats.push(chatObj);
+      };
+
+      if (isDbFailed) {
+        updateMemoryChat();
+      } else {
+        try {
+          await db.chats.put(chatObj);
+        } catch(e) {
+          isDbFailed = true;
+          updateMemoryChat();
+        }
+      }
     }
 
     if (messageObj.sender === owner && !messageObj.fromSupabase && !isUpdateOnly) {
@@ -99,28 +150,72 @@ export const saveMessage = async (messageObj, owner) => {
  * Updates specific properties of a message.
  */
 export const updateMessageProperties = async (messageId, owner, updates) => {
-  const msg = await db.messages.where('[owner+messageId]').equals([owner, messageId]).first();
-  if (msg) {
-    await db.messages.update(msg.id, updates);
-    notify();
-    return true;
+  if (isDbFailed) {
+    const msg = memoryStore.messages.find(m => m.owner === owner && m.messageId === messageId);
+    if (msg) {
+      Object.assign(msg, updates);
+      notify();
+      return true;
+    }
+    return false;
   }
-  return false;
+
+  try {
+    const msg = await db.messages.where('[owner+messageId]').equals([owner, messageId]).first();
+    if (msg) {
+      await db.messages.update(msg.id, updates);
+      notify();
+      return true;
+    }
+    return false;
+  } catch (e) {
+    isDbFailed = true;
+    const msg = memoryStore.messages.find(m => m.owner === owner && m.messageId === messageId);
+    if (msg) {
+      Object.assign(msg, updates);
+      notify();
+      return true;
+    }
+    return false;
+  }
 };
 
 /**
  * Gets a single message by ID.
  */
 export const getMessage = async (messageId, owner) => {
-  return await db.messages.where('[owner+messageId]').equals([owner, messageId]).first();
+  if (isDbFailed) {
+    return memoryStore.messages.find(m => m.owner === owner && m.messageId === messageId);
+  }
+  try {
+    return await db.messages.where('[owner+messageId]').equals([owner, messageId]).first();
+  } catch (e) {
+    isDbFailed = true;
+    return memoryStore.messages.find(m => m.owner === owner && m.messageId === messageId);
+  }
 };
 
 /**
  * Creates or updates a chat entry manually.
  */
 export const saveChat = async (chatObj) => {
-  await db.chats.put(chatObj);
-  notify();
+  if (isDbFailed) {
+    const idx = memoryStore.chats.findIndex(c => c.owner === chatObj.owner && c.roomId === chatObj.roomId);
+    if (idx >= 0) memoryStore.chats[idx] = chatObj;
+    else memoryStore.chats.push(chatObj);
+    notify();
+    return;
+  }
+  try {
+    await db.chats.put(chatObj);
+    notify();
+  } catch (e) {
+    isDbFailed = true;
+    const idx = memoryStore.chats.findIndex(c => c.owner === chatObj.owner && c.roomId === chatObj.roomId);
+    if (idx >= 0) memoryStore.chats[idx] = chatObj;
+    else memoryStore.chats.push(chatObj);
+    notify();
+  }
 };
 
 /**
@@ -130,10 +225,20 @@ export const saveChat = async (chatObj) => {
  */
 export const loadMessages = async (roomId, owner) => {
   if (!owner) return [];
-  return await db.messages
-    .where('[owner+roomId]')
-    .equals([owner, roomId])
-    .sortBy('timestamp');
+  if (isDbFailed) {
+    const msgs = memoryStore.messages.filter(m => m.owner === owner && m.roomId === roomId);
+    return msgs.sort((a, b) => a.timestamp - b.timestamp);
+  }
+  try {
+    return await db.messages
+      .where('[owner+roomId]')
+      .equals([owner, roomId])
+      .sortBy('timestamp');
+  } catch (e) {
+    isDbFailed = true;
+    const msgs = memoryStore.messages.filter(m => m.owner === owner && m.roomId === roomId);
+    return msgs.sort((a, b) => a.timestamp - b.timestamp);
+  }
 };
 
 /**
@@ -142,24 +247,91 @@ export const loadMessages = async (roomId, owner) => {
  */
 export const loadChats = async (owner) => {
   if (!owner) return [];
-  const chats = await db.chats
-    .where('owner')
-    .equals(owner)
-    .toArray();
-    
-  return chats.sort((a, b) => b.timestamp - a.timestamp);
+  if (isDbFailed) {
+    const chats = memoryStore.chats.filter(c => c.owner === owner);
+    return chats.sort((a, b) => b.timestamp - a.timestamp);
+  }
+  try {
+    const chats = await db.chats
+      .where('owner')
+      .equals(owner)
+      .toArray();
+      
+    return chats.sort((a, b) => b.timestamp - a.timestamp);
+  } catch (e) {
+    isDbFailed = true;
+    const chats = memoryStore.chats.filter(c => c.owner === owner);
+    return chats.sort((a, b) => b.timestamp - a.timestamp);
+  }
 };
 
 /**
  * Deletes chat history for a room or all rooms.
- * @param {string} roomId 
  */
-export const deleteChatHistory = async (roomId) => {
-  if (roomId) {
-    await db.messages.where('roomId').equals(roomId).delete();
-    await db.chats.where('roomId').equals(roomId).delete();
-  } else {
-    await db.messages.clear();
-    await db.chats.clear();
+export const deleteChatHistory = async (roomId, owner) => {
+  if (isDbFailed) {
+    if (roomId) {
+      memoryStore.messages = memoryStore.messages.filter(m => !(m.owner === owner && m.roomId === roomId));
+      memoryStore.chats = memoryStore.chats.filter(c => !(c.owner === owner && c.roomId === roomId));
+    } else {
+      memoryStore.messages = memoryStore.messages.filter(m => m.owner !== owner);
+      memoryStore.chats = memoryStore.chats.filter(c => c.owner !== owner);
+    }
+    notify();
+    return;
+  }
+  try {
+    if (roomId) {
+      await db.messages.where('[owner+roomId]').equals([owner, roomId]).delete();
+      await db.chats.where('[owner+roomId]').equals([owner, roomId]).delete();
+    } else {
+      await db.messages.where('owner').equals(owner).delete();
+      await db.chats.where('owner').equals(owner).delete();
+    }
+    notify();
+  } catch (e) {
+    isDbFailed = true;
+    if (roomId) {
+      memoryStore.messages = memoryStore.messages.filter(m => !(m.owner === owner && m.roomId === roomId));
+      memoryStore.chats = memoryStore.chats.filter(c => !(c.owner === owner && c.roomId === roomId));
+    } else {
+      memoryStore.messages = memoryStore.messages.filter(m => m.owner !== owner);
+      memoryStore.chats = memoryStore.chats.filter(c => c.owner !== owner);
+    }
+    notify();
+  }
+};
+
+/**
+ * Gets bookmarked messages for a user
+ */
+export const getBookmarkedMessages = async (owner) => {
+  if (!owner) return [];
+  if (isDbFailed) {
+    const msgs = memoryStore.messages.filter(m => m.owner === owner && m.bookmarked === 1);
+    return msgs.sort((a, b) => a.timestamp - b.timestamp);
+  }
+  try {
+    return await db.messages.where('[owner+bookmarked]').equals([owner, 1]).toArray();
+  } catch (e) {
+    isDbFailed = true;
+    const msgs = memoryStore.messages.filter(m => m.owner === owner && m.bookmarked === 1);
+    return msgs.sort((a, b) => a.timestamp - b.timestamp);
+  }
+};
+
+/**
+ * Gets a specific chat by roomId
+ */
+export const getChat = async (roomId, owner) => {
+  if (!owner || !roomId) return null;
+  if (isDbFailed) {
+    return memoryStore.chats.find(c => c.owner === owner && c.roomId === roomId);
+  }
+  try {
+    return await db.chats.where('[owner+roomId]').equals([owner, roomId]).first();
+  } catch (e) {
+    isDbFailed = true;
+    return memoryStore.chats.find(c => c.owner === owner && c.roomId === roomId);
   }
 };

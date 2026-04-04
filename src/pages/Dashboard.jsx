@@ -3,7 +3,7 @@ import Sidebar from '../components/Sidebar/Sidebar';
 import ChatWindow from '../components/ChatWindow/ChatWindow';
 import { createPeerConnection, connectToRoom, sendMessage, getPeer } from '../services/webrtcService';
 import { subscribeToMessages } from '../services/supabaseService';
-import { saveMessage, loadMessages, loadChats, subscribe, db, saveChat, notify, updateMessageProperties, getMessage } from '../services/storageService';
+import { saveMessage, loadMessages, loadChats, subscribe, db, saveChat, notify, updateMessageProperties, getMessage, getBookmarkedMessages, getChat, deleteChatHistory } from '../services/storageService';
 import { encryptMessage, decryptMessage } from '../services/encryptionService';
 
 
@@ -29,7 +29,7 @@ const Dashboard = ({ user, onLogout }) => {
 
     let storedMessages = [];
     if (activeRoom === 'bookmarks') {
-      storedMessages = await db.messages.where('[owner+bookmarked]').equals([lowerOwner, 1]).toArray();
+      storedMessages = await getBookmarkedMessages(lowerOwner);
     } else if (activeRoom) {
       storedMessages = await loadMessages(activeRoom, lowerOwner);
     }
@@ -88,7 +88,7 @@ const Dashboard = ({ user, onLogout }) => {
     }
 
     // Auto-create chat in sidebar if it doesn't exist
-    const existingChat = await db.chats.where('[owner+roomId]').equals([user.username.toLowerCase(), localRoomId]).first();
+    const existingChat = await getChat(localRoomId, user.username.toLowerCase());
     if (!existingChat) {
         await saveChat({
             roomId: localRoomId,
@@ -137,20 +137,25 @@ const Dashboard = ({ user, onLogout }) => {
       `user-${lowerMe}`, 
       (newMessage) => {
         if (newMessage.sender.toLowerCase() === lowerMe) return;
-        handleReceivedMessage({
-          messageId: newMessage.message_id || newMessage.messageId,
-          roomId: newMessage.room_id || newMessage.roomId,
-          sender: newMessage.sender.toLowerCase(),
-          encryptedText: newMessage.encrypted_text || newMessage.encryptedText,
-          fileData: newMessage.file_data || newMessage.fileData,
-          timestamp: newMessage.timestamp ? new Date(newMessage.timestamp).getTime() : Date.now(),
-          type: newMessage.type,
-          isEdited: newMessage.isEdited,
-          pinned: newMessage.pinned,
-          bookmarked: newMessage.bookmarked,
-          reactions: newMessage.reactions,
-          fromSupabase: true
-        });
+        const cleanPayload = (newMessage) => {
+          const constructed = {
+            messageId: newMessage.message_id || newMessage.messageId,
+            roomId: newMessage.room_id || newMessage.roomId,
+            sender: (newMessage.sender || '').toLowerCase(),
+            type: newMessage.type,
+            fromSupabase: true
+          };
+          if (newMessage.encrypted_text || newMessage.encryptedText) constructed.encryptedText = newMessage.encrypted_text || newMessage.encryptedText;
+          if (newMessage.file_data || newMessage.fileData) constructed.fileData = newMessage.file_data || newMessage.fileData;
+          if (newMessage.timestamp) constructed.timestamp = new Date(newMessage.timestamp).getTime();
+          if (newMessage.isEdited !== undefined) constructed.isEdited = newMessage.isEdited;
+          if (newMessage.pinned !== undefined) constructed.pinned = newMessage.pinned;
+          if (newMessage.bookmarked !== undefined) constructed.bookmarked = newMessage.bookmarked;
+          if (newMessage.reactions !== undefined) constructed.reactions = newMessage.reactions;
+          return constructed;
+        };
+
+        handleReceivedMessage(cleanPayload(newMessage));
       }
     );
 
@@ -160,21 +165,27 @@ const Dashboard = ({ user, onLogout }) => {
       activeUnsubscribe = subscribeToMessages(
         activeRoom, 
         (newMessage) => {
-          if (newMessage.sender.toLowerCase() === lowerMe) return;
-          handleReceivedMessage({
-            messageId: newMessage.message_id || newMessage.messageId,
-            roomId: newMessage.room_id || newMessage.roomId,
-            sender: newMessage.sender.toLowerCase(),
-            encryptedText: newMessage.encrypted_text || newMessage.encryptedText,
-            fileData: newMessage.file_data || newMessage.fileData,
-            timestamp: newMessage.timestamp ? new Date(newMessage.timestamp).getTime() : Date.now(),
-            type: newMessage.type,
-            isEdited: newMessage.isEdited,
-            pinned: newMessage.pinned,
-            bookmarked: newMessage.bookmarked,
-            reactions: newMessage.reactions,
-            fromSupabase: true
-          });
+          if ((newMessage.sender || '').toLowerCase() === lowerMe) return;
+          
+          const cleanPayload = (newMessage) => {
+            const constructed = {
+              messageId: newMessage.message_id || newMessage.messageId,
+              roomId: newMessage.room_id || newMessage.roomId,
+              sender: (newMessage.sender || '').toLowerCase(),
+              type: newMessage.type,
+              fromSupabase: true
+            };
+            if (newMessage.encrypted_text || newMessage.encryptedText) constructed.encryptedText = newMessage.encrypted_text || newMessage.encryptedText;
+            if (newMessage.file_data || newMessage.fileData) constructed.fileData = newMessage.file_data || newMessage.fileData;
+            if (newMessage.timestamp) constructed.timestamp = new Date(newMessage.timestamp).getTime();
+            if (newMessage.isEdited !== undefined) constructed.isEdited = newMessage.isEdited;
+            if (newMessage.pinned !== undefined) constructed.pinned = newMessage.pinned;
+            if (newMessage.bookmarked !== undefined) constructed.bookmarked = newMessage.bookmarked;
+            if (newMessage.reactions !== undefined) constructed.reactions = newMessage.reactions;
+            return constructed;
+          };
+
+          handleReceivedMessage(cleanPayload(newMessage));
         }
       );
     }
@@ -382,9 +393,7 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleDeleteChat = async (roomId) => {
     if (confirm("Are you sure?")) {
-      await db.messages.where('[owner+roomId]').equals([user.username.toLowerCase(), roomId]).delete();
-      await db.chats.where('[owner+roomId]').equals([user.username.toLowerCase(), roomId]).delete();
-      notify();
+      await deleteChatHistory(roomId, user.username.toLowerCase());
       if (activeRoom === roomId) setActiveRoom(null);
     }
   };
