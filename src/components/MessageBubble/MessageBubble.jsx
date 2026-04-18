@@ -94,7 +94,7 @@ const MessageBubble = ({ message, onEdit, onReact, onPin, onBookmark, isBookmark
           )}
           
           {message.fileData ? (
-            <FileRenderer fileData={message.fileData} />
+            <FileRenderer fileData={message.fileData} roomId={message.roomId} />
           ) : (
             <div style={{ wordBreak: 'break-word' }}>
               {message.text}
@@ -252,10 +252,10 @@ const MessageBubble = ({ message, onEdit, onReact, onPin, onBookmark, isBookmark
   );
 };
 
-const FileRenderer = ({ fileData }) => {
+const FileRenderer = ({ fileData, roomId }) => {
   let decryptedData = '';
   try {
-    decryptedData = decryptMessage(fileData.data);
+    decryptedData = decryptMessage(fileData.data, roomId);
   } catch (e) {
     console.error("Failed to decrypt file data", e);
     return <div style={{ color: 'var(--danger)', fontSize: '12px' }}>[Error decrypting file]</div>;
