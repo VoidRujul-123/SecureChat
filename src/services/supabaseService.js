@@ -70,15 +70,16 @@ export const broadcastMessage = async (messageObj) => {
     // Trigger the real-time notification immediately so it guarantees delivery over WebSocket regardless of RLS or Postgres failures
     sendRealtimeBroadcast(messageObj.roomId, payload, messageObj.sender);
 
-    const { error } = await supabase.from('messages').insert([payload]);
-    if (error) {
-        console.warn('Supabase: Failed to insert to Postgres database, but websocket broadcast was fired.', error);
-        return false;
-    }
+    // PERSIST TO DATABASE IN BACKGROUND (DON'T AWAIT)
+    supabase.from('messages').insert([payload]).then(({ error }) => {
+        if (error) {
+            console.warn('Supabase: Background database insert failed, but websocket broadcast was fired.', error);
+        }
+    });
 
     return true;
   } catch (err) {
-    console.error('Supabase: Failed to broadcast:', err);
+    console.error('Supabase: Failed to initiate broadcast:', err);
     return false;
   }
 };

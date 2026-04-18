@@ -47,6 +47,9 @@ export const createPeerConnection = (username, onMessage, onCall) => {
       'iceServers': [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
         { urls: 'stun:global.stun.twilio.com:3478' },
         {
           urls: "turn:openrelay.metered.ca:80",
@@ -60,6 +63,17 @@ export const createPeerConnection = (username, onMessage, onCall) => {
         },
         {
           urls: "turn:openrelay.metered.ca:443?transport=tcp",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        // Additional free relay server for redundancy
+        {
+          urls: "turn:relay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:relay.metered.ca:443",
           username: "openrelayproject",
           credential: "openrelayproject"
         }

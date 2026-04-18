@@ -39,10 +39,10 @@ export const notify = () => listeners.forEach(l => l());
 
 const pendingSaves = new Map();
 
-const safeDecrypt = (encryptedText) => {
+const safeDecrypt = (encryptedText, roomId = null) => {
   if (!encryptedText) return '';
   try {
-    return decryptMessage(encryptedText);
+    return decryptMessage(encryptedText, roomId);
   } catch (e) {
     return '[Decryption Failed]';
   }
@@ -117,7 +117,7 @@ export const saveMessage = async (messageObj, owner) => {
         roomId: messageObj.roomId,
         owner,
         name: messageObj.roomName || messageObj.roomId,
-        lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : safeDecrypt(messageObj.encryptedText)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? safeDecrypt(existing.encryptedText) : '')),
+        lastMessage: messageObj.encryptedText ? (messageObj.fileData ? '[File]' : safeDecrypt(messageObj.encryptedText, messageObj.roomId)) : (messageObj.fileData ? '[File]' : (existing?.encryptedText ? safeDecrypt(existing.encryptedText, messageObj.roomId) : '')),
         timestamp: messageObj.timestamp || Date.now()
       };
       
@@ -140,8 +140,13 @@ export const saveMessage = async (messageObj, owner) => {
     }
 
     if (messageObj.sender === owner && !messageObj.fromSupabase && !isUpdateOnly) {
+        // Fire-and-forget broadcast to cloud in background
         broadcastMessage(messageObj);
     }
+
+    // TRIGGER OPTIMISTIC UI UPDATE
+    // Since local save is done, notify the UI now so the user sees the message instantly.
+    notify();
   })();
 
   pendingSaves.set(lockKey, saveOperation);
@@ -149,9 +154,8 @@ export const saveMessage = async (messageObj, owner) => {
   try {
     await saveOperation;
   } finally {
-    // Keep it in map for a brief window to prevent micro-race conditions just in case
+    // Keep it in map for a brief window to prevent micro-race conditions
     setTimeout(() => pendingSaves.delete(lockKey), 1000);
-    notify();
   }
 };
 

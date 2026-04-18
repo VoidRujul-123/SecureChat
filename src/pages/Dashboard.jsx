@@ -14,6 +14,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [peerInitialized, setPeerInitialized] = useState(false);
   const [typingUser, setTypingUser] = useState(null);
   const typingTimeoutRef = useRef(null);
+  const processedMessagesRef = useRef(new Set());
 
   const getSymmetricalId = useCallback((user1, user2) => {
     if (!user1 || !user2) return null;
@@ -37,7 +38,7 @@ const Dashboard = ({ user, onLogout }) => {
     const decryptedMessages = (storedMessages || []).map(m => {
       let text = '';
       try {
-        text = m.fileData ? '[File]' : (m.encryptedText ? decryptMessage(m.encryptedText) : '');
+        text = m.fileData ? '[File]' : (m.encryptedText ? decryptMessage(m.encryptedText, m.roomId) : '');
       } catch (e) {
         console.error("Failed to decrypt message:", e);
         text = '[Decryption Failed]';
@@ -61,6 +62,11 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleReceivedMessage = useCallback(async (data, fromPeer) => {
     if (!data) return;
+
+    // Global Deduplication for Production Reliability
+    const dedupeId = data.packetId || data.messageId;
+    if (dedupeId && processedMessagesRef.current.has(dedupeId)) return;
+    if (dedupeId) processedMessagesRef.current.add(dedupeId);
 
     if (data.type === 'TYPING') {
       if (data.roomId === activeRoomRef.current) {
@@ -289,7 +295,7 @@ const Dashboard = ({ user, onLogout }) => {
   const handleSendMessage = async (text, fileData = null) => {
     if (!activeRoom || activeRoom === 'bookmarks') return;
 
-    const encryptedText = text ? encryptMessage(text) : '';
+    const encryptedText = text ? encryptMessage(text, activeRoom) : '';
     const messageObj = {
       messageId: `${user.username.toLowerCase()}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       roomId: activeRoom,
@@ -299,7 +305,7 @@ const Dashboard = ({ user, onLogout }) => {
       fileData: fileData ? {
         name: fileData.name,
         type: fileData.type,
-        data: encryptMessage(fileData.data)
+        data: encryptMessage(fileData.data, activeRoom)
       } : null,
       timestamp: Date.now(),
       readStatus: 'sent',
@@ -314,7 +320,7 @@ const Dashboard = ({ user, onLogout }) => {
     const msg = await getMessage(messageId, user.username.toLowerCase());
     if (!msg) return;
 
-    const encryptedText = encryptMessage(newText);
+    const encryptedText = encryptMessage(newText, msg.roomId);
     await updateMessageProperties(messageId, user.username.toLowerCase(), { encryptedText, isEdited: true });
     
     const payload = { 
